@@ -75,6 +75,10 @@
 #include "realpath.h"
 #include "misc.h"
 
+#ifdef __ANDROID__
+#define MOUNTED "/etc/mtab"
+#endif
+
 const char *ntfs_home = 
 "News, support and information:  http://tuxera.com\n";
 
