@@ -154,7 +154,7 @@ struct fuse_chan *fuse_mount(const char *mountpoint, struct fuse_args *args);
  */
 void fuse_unmount(const char *mountpoint, struct fuse_chan *ch);
 
-#ifdef __SOLARIS__
+#if defined(__SOLARIS__) || defined(__ANDROID__)
 /**
  * Parse common options
  *

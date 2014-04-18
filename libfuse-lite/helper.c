@@ -59,3 +59,39 @@ int fuse_main(void)
     return -1;
 }
 #endif /* __SOLARIS__ */
+
+#ifdef __ANDROID__
+int fuse_daemonize(int foreground)
+{
+    if (!foreground) {
+        int nullfd;
+        int pid = fork();
+
+        /*
+         * demonize current process by forking it and killing the
+         * parent.  This makes current process as a child of 'init'.
+         */
+        if (pid < 0) {
+            fprintf(stderr, "fuse_daemonize: fork\n");
+            return -1;
+        } else if (pid > 0)
+            _exit(0);
+
+        if (setsid() == -1) {
+            fprintf(stderr, "fuse_daemonize: setsid\n");
+            return -1;
+        }
+
+        chdir("/");
+        nullfd = open("/dev/null", O_RDWR, 0);
+        if (nullfd != -1) {
+            dup2(nullfd, 0);
+            dup2(nullfd, 1);
+            dup2(nullfd, 2);
+            if (nullfd > 2)
+                close(nullfd);
+        }
+    }
+    return 0;
+}
+#endif
