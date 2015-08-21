@@ -75,7 +75,7 @@
 #include "realpath.h"
 #include "misc.h"
 
-#ifdef __ANDROID__
+#ifndef MOUNTED
 #define MOUNTED "/etc/mtab"
 #endif
 

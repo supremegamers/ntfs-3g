@@ -17,13 +17,16 @@ if ENABLE_NTFSPROGS
 bin_PROGRAMS		= ntfsfix ntfsinfo ntfscluster ntfsls ntfscat ntfscmp
 sbin_PROGRAMS		= mkntfs ntfslabel ntfsundelete ntfsresize ntfsclone \
 			  ntfscp
-EXTRA_PROGRAM_NAMES	= ntfsdump_logfile ntfswipe ntfstruncate ntfsmove \
-			  ntfsmftalloc ntfsck
+EXTRA_PROGRAM_NAMES	= ntfswipe ntfstruncate
+
+QUARANTINED_PROGRAM_NAMES = ntfsdump_logfile ntfsmftalloc ntfsmove ntfsck \
+			   ntfsfallocate
 
 man_MANS		= mkntfs.8 ntfsfix.8 ntfslabel.8 ntfsinfo.8 \
 			  ntfsundelete.8 ntfsresize.8 ntfsprogs.8 ntfsls.8 \
 			  ntfsclone.8 ntfscluster.8 ntfscat.8 ntfscp.8 \
-			  ntfscmp.8
+			  ntfscmp.8 ntfswipe.8 ntfstruncate.8 \
+			  ntfsdecrypt.8 ntfsfallocate.8
 EXTRA_MANS		=
 
 CLEANFILES		= $(EXTRA_PROGRAMS)
@@ -36,6 +39,9 @@ endif
 
 if ENABLE_EXTRAS
 bin_PROGRAMS		+= $(EXTRA_PROGRAM_NAMES)
+if ENABLE_QUARANTINED
+bin_PROGRAMS		+= $(QUARANTINED_PROGRAM_NAMES)
+endif
 else
 EXTRA_PROGRAMS		= $(EXTRA_PROGRAM_NAMES)
 endif
@@ -118,6 +124,10 @@ ntfsdump_logfile_SOURCES= ntfsdump_logfile.c
 ntfsdump_logfile_LDADD	= $(AM_LIBS)
 ntfsdump_logfile_LDFLAGS= $(AM_LFLAGS)
 
+ntfsfallocate_SOURCES	= ntfsfallocate.c utils.c utils.h
+ntfsfallocate_LDADD	= $(AM_LIBS)
+ntfsfallocate_LDFLAGS	= $(AM_LFLAGS)
+
 if ENABLE_CRYPTO
 ntfsdecrypt_SOURCES	= ntfsdecrypt.c utils.c utils.h
 ntfsdecrypt_LDADD	= $(AM_LIBS) $(GNUTLS_LIBS) $(LIBGCRYPT_LIBS)
@@ -139,6 +149,7 @@ extras:	libs $(EXTRA_PROGRAMS)
 
 # mkfs.ntfs[.8] hard link
 
+if ENABLE_MOUNT_HELPER
 install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)/sbin
 	$(LN_S) -f $(sbindir)/mkntfs $(DESTDIR)/sbin/mkfs.ntfs
@@ -150,5 +161,6 @@ install-data-hook:
 uninstall-local:
 	$(RM) -f $(DESTDIR)/sbin/mkfs.ntfs
 	$(RM) -f $(DESTDIR)$(man8dir)/mkfs.ntfs.8
+endif
 
 endif

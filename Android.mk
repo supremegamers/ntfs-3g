@@ -14,7 +14,7 @@ ntfs_3g_C_INCLUDES := \
 	$(LOCAL_PATH)/include/fuse-lite \
 	$(LOCAL_PATH)/include/ntfs-3g \
 
-ntfs_3g_CFLAGS := -O2 -Wall -D_LARGEFILE_SOURCE -DHAVE_CONFIG_H
+ntfs_3g_CFLAGS := -O2 -Wall -D_LARGEFILE_SOURCE -DHAVE_CONFIG_H -DHAVE_LINUX_FS_H
 
 # libfuse-lite
 include $(CLEAR_VARS)
@@ -56,6 +56,7 @@ LOCAL_SRC_FILES := $(addprefix libntfs-3g/, \
 	efs.c \
 	index.c \
 	inode.c \
+	ioctl.c \
 	lcnalloc.c \
 	logfile.c \
 	logging.c \
