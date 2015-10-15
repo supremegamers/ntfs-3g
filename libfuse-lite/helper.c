@@ -6,6 +6,7 @@
     See the file COPYING.LIB.
 */
 
+#include <unistd.h>
 #include "config.h"
 #include "fuse_i.h"
 #include "fuse_lowlevel.h"
