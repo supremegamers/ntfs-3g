@@ -10,10 +10,6 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ntfs_3g_C_INCLUDES := \
-	$(LOCAL_PATH)/include/fuse-lite \
-	$(LOCAL_PATH)/include/ntfs-3g \
-
 ntfs_3g_CFLAGS := -O2 -Wall -D_LARGEFILE_SOURCE -DHAVE_CONFIG_H -DHAVE_LINUX_FS_H
 
 # libfuse-lite
@@ -31,10 +27,11 @@ LOCAL_SRC_FILES := $(addprefix libfuse-lite/, \
 	mount.c \
 	mount_util.c \
 )
-LOCAL_C_INCLUDES := $(ntfs_3g_C_INCLUDES)
 LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := libfuse-lite
 LOCAL_MODULE_TAGS := optional
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/fuse-lite
+LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_C_INCLUDES)
 include $(BUILD_SHARED_LIBRARY)
 
 # libntfs-3g
@@ -73,16 +70,16 @@ LOCAL_SRC_FILES := $(addprefix libntfs-3g/, \
 	volume.c \
 	xattrs.c \
 )
-LOCAL_C_INCLUDES := $(ntfs_3g_C_INCLUDES)
 LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := libntfs-3g
 LOCAL_MODULE_TAGS := optional
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/ntfs-3g
+LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_C_INCLUDES)
 include $(BUILD_SHARED_LIBRARY)
 
 # ntfs-3g
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES := src/ntfs-3g.c src/ntfs-3g_common.c
-LOCAL_C_INCLUDES := $(ntfs_3g_C_INCLUDES)
 LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := ntfs-3g
 LOCAL_MODULE_TAGS := optional
@@ -92,7 +89,6 @@ include $(BUILD_EXECUTABLE)
 # ntfsprogs - ntfsfix
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES := ntfsprogs/ntfsfix.c ntfsprogs/utils.c
-LOCAL_C_INCLUDES := $(ntfs_3g_C_INCLUDES)
 LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := ntfsfix
 LOCAL_MODULE_TAGS := optional
@@ -102,7 +98,6 @@ include $(BUILD_EXECUTABLE)
 # ntfsprogs - mkntfs
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES := $(addprefix ntfsprogs/,attrdef.c boot.c mkntfs.c sd.c utils.c)
-LOCAL_C_INCLUDES := $(ntfs_3g_C_INCLUDES)
 LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := mkntfs
 LOCAL_MODULE_TAGS := optional
