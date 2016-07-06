@@ -84,6 +84,7 @@ LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := ntfs-3g
 LOCAL_MODULE_TAGS := optional
 LOCAL_SHARED_LIBRARIES := libfuse-lite libntfs-3g
+LOCAL_POST_INSTALL_CMD := $(hide) ln -sf $(LOCAL_MODULE) $(TARGET_OUT)/bin/mount.ntfs
 include $(BUILD_EXECUTABLE)
 
 # ntfsprogs - ntfsfix
@@ -93,6 +94,7 @@ LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := ntfsfix
 LOCAL_MODULE_TAGS := optional
 LOCAL_SHARED_LIBRARIES := libfuse-lite libntfs-3g
+LOCAL_POST_INSTALL_CMD := $(hide) ln -sf $(LOCAL_MODULE) $(TARGET_OUT)/bin/fsck.ntfs
 include $(BUILD_EXECUTABLE)
 
 # ntfsprogs - mkntfs
@@ -102,4 +104,5 @@ LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
 LOCAL_MODULE := mkntfs
 LOCAL_MODULE_TAGS := optional
 LOCAL_SHARED_LIBRARIES := libfuse-lite libntfs-3g
+LOCAL_POST_INSTALL_CMD := $(hide) ln -sf $(LOCAL_MODULE) $(TARGET_OUT)/bin/mkfs.ntfs
 include $(BUILD_EXECUTABLE)
