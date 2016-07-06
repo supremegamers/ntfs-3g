@@ -3,7 +3,7 @@
  *
  *	This module is part of ntfs-3g library
  *
- * Copyright (c) 2008-2014 Jean-Pierre Andre
+ * Copyright (c) 2008-2016 Jean-Pierre Andre
  *
  * This program/include file is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as published
@@ -195,7 +195,7 @@ static u64 ntfs_fix_file_name(ntfs_inode *dir_ni, ntfschar *uname,
 						uname[i] = found->file_name[i];
 				} else {
 					for (i=0; i<found->file_name_length; i++)
-						uname[i] = vol->locase[found->file_name[i]];
+						uname[i] = vol->locase[le16_to_cpu(found->file_name[i])];
 				}
 			}
 		}
@@ -422,8 +422,10 @@ static int ntfs_drive_letter(ntfs_volume *vol, ntfschar letter)
 /*
  *		Do some sanity checks on reparse data
  *
- *	The only general check is about the size (at least the tag must
- *	be present)
+ *	Microsoft reparse points have an 8-byte header whereas
+ *	non-Microsoft reparse points have a 24-byte header.  In each case,
+ *	'reparse_data_length' must equal the number of non-header bytes.
+ *
  *	If the reparse data looks like a junction point or symbolic
  *	link, more checks can be done.
  *
@@ -440,8 +442,11 @@ static BOOL valid_reparse_data(ntfs_inode *ni,
 
 	ok = ni && reparse_attr
 		&& (size >= sizeof(REPARSE_POINT))
+		&& (reparse_attr->reparse_tag != IO_REPARSE_TAG_RESERVED_ZERO)
 		&& (((size_t)le16_to_cpu(reparse_attr->reparse_data_length)
-				 + sizeof(REPARSE_POINT)) == size);
+			 + sizeof(REPARSE_POINT)
+			 + ((reparse_attr->reparse_tag &
+			     IO_REPARSE_TAG_IS_MICROSOFT) ? 0 : sizeof(GUID))) == size);
 	if (ok) {
 		switch (reparse_attr->reparse_tag) {
 		case IO_REPARSE_TAG_MOUNT_POINT :
@@ -1251,3 +1256,31 @@ int ntfs_remove_ntfs_reparse_data(ntfs_inode *ni)
 }
 
 #endif /* HAVE_SETXATTR */
+
+/*
+ *		Get the reparse data into a buffer
+ *
+ *	Returns the buffer if the reparse data exists and is valid
+ *		NULL otherwise (with errno set according to the cause).
+ *	When a buffer is returned, it has to be freed by caller.
+ */
+
+REPARSE_POINT *ntfs_get_reparse_point(ntfs_inode *ni)
+{
+	s64 attr_size = 0;
+	REPARSE_POINT *reparse_attr;
+
+	reparse_attr = (REPARSE_POINT*)NULL;
+	if (ni) {
+		reparse_attr = (REPARSE_POINT*)ntfs_attr_readall(ni,
+			AT_REPARSE_POINT,(ntfschar*)NULL, 0, &attr_size);
+		if (reparse_attr
+		    && !valid_reparse_data(ni, reparse_attr, attr_size)) {
+			free(reparse_attr);
+			reparse_attr = (REPARSE_POINT*)NULL;
+			errno = ENOENT;
+		}
+	} else
+		errno = EINVAL;
+	return (reparse_attr);
+}

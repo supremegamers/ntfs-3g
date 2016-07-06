@@ -4,7 +4,7 @@
  * Copyright (c) 2005-2007 Yura Pakhuchiy
  * Copyright (c) 2005 Yuval Fledel
  * Copyright (c) 2006-2009 Szabolcs Szakacsits
- * Copyright (c) 2007-2015 Jean-Pierre Andre
+ * Copyright (c) 2007-2016 Jean-Pierre Andre
  * Copyright (c) 2009 Erik Larsson
  *
  * This file is originated from the Linux-NTFS project.
@@ -73,8 +73,11 @@
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
 #endif
-#ifdef HAVE_SYS_MKDEV_H
+#ifdef MAJOR_IN_MKDEV
 #include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
 #endif
 
 #if defined(__APPLE__) || defined(__DARWIN__)
@@ -105,6 +108,7 @@
 #include "xattrs.h"
 #include "misc.h"
 #include "ioctl.h"
+#include "plugin.h"
 
 #include "ntfs-3g_common.h"
 
@@ -157,6 +161,22 @@
 #define set_archive(ni) (ni)->flags |= FILE_ATTR_ARCHIVE
 #define INODE(ino) ((ino) == 1 ? (MFT_REF)FILE_root : (MFT_REF)(ino))
 
+/*
+ *		Call a function from a reparse plugin (variable arguments)
+ *	Requires "reparse" and "ops" to have been defined
+ *
+ *	Returns a non-negative value if successful,
+ *		and a negative error code if something fails.
+ */
+#define CALL_REPARSE_PLUGIN(ni, op_name, ...)			\
+	 (reparse = (REPARSE_POINT*)NULL,			 \
+	 ops = select_reparse_plugin(ctx, ni, &reparse),	 \
+	 (!ops ? -errno						 \
+		 : (ops->op_name ?				 \
+			 ops->op_name(ni, reparse, __VA_ARGS__)  \
+			 : -EOPNOTSUPP))),			 \
+		 free(reparse)
+
 typedef enum {
 	FSTYPE_NONE,
 	FSTYPE_UNKNOWN,
@@ -187,13 +207,17 @@ struct open_file {
 	fuse_ino_t ino;
 	fuse_ino_t parent;
 	int state;
+#ifndef PLUGINS_DISABLED
+	struct fuse_file_info fi;
+#endif /* PLUGINS_DISABLED */
 } ;
 
 enum {
 	CLOSE_GHOST = 1,
 	CLOSE_COMPRESSED = 2,
 	CLOSE_ENCRYPTED = 4,
-	CLOSE_DMTIME = 8
+	CLOSE_DMTIME = 8,
+	CLOSE_REPARSE = 16
 };
 
 enum RM_TYPES {
@@ -227,7 +251,7 @@ static const char *usage_msg =
 "\n"
 "Copyright (C) 2005-2007 Yura Pakhuchiy\n"
 "Copyright (C) 2006-2009 Szabolcs Szakacsits\n"
-"Copyright (C) 2007-2015 Jean-Pierre Andre\n"
+"Copyright (C) 2007-2016 Jean-Pierre Andre\n"
 "Copyright (C) 2009 Erik Larsson\n"
 "\n"
 "Usage:    %s [-o option[,...]] <device|image_file> <mount_point>\n"
@@ -275,10 +299,10 @@ static void ntfs_fuse_update_times(ntfs_inode *ni, ntfs_time_update_flags mask)
 	if (ctx->atime == ATIME_DISABLED)
 		mask &= ~NTFS_UPDATE_ATIME;
 	else if (ctx->atime == ATIME_RELATIVE && mask == NTFS_UPDATE_ATIME &&
-			(le64_to_cpu(ni->last_access_time)
-				>= le64_to_cpu(ni->last_data_change_time)) &&
-			(le64_to_cpu(ni->last_access_time)
-				>= le64_to_cpu(ni->last_mft_change_time)))
+			(sle64_to_cpu(ni->last_access_time)
+				>= sle64_to_cpu(ni->last_data_change_time)) &&
+			(sle64_to_cpu(ni->last_access_time)
+				>= sle64_to_cpu(ni->last_mft_change_time)))
 		return;
 	ntfs_inode_update_times(ni, mask);
 }
@@ -598,6 +622,67 @@ static void ntfs_init(void *userdata __attribute__((unused)),
 #endif /* defined(FUSE_CAP_IOCTL_DIR) */
 }
 
+#ifndef PLUGINS_DISABLED
+
+/*
+ *		Define attributes for a junction or symlink
+ *		(internal plugin)
+ */
+
+static int junction_getstat(ntfs_inode *ni,
+			const REPARSE_POINT *reparse __attribute__((unused)),
+			struct stat *stbuf)
+{
+	char *target;
+	int attr_size;
+	int res;
+
+	errno = 0;
+	target = ntfs_make_symlink(ni, ctx->abs_mnt_point, &attr_size);
+		/*
+		 * If the reparse point is not a valid
+		 * directory junction, and there is no error
+		 * we still display as a symlink
+		 */
+	if (target || (errno == EOPNOTSUPP)) {
+			/* returning attribute size */
+		if (target)
+			stbuf->st_size = attr_size;
+		else
+			stbuf->st_size = sizeof(ntfs_bad_reparse);
+		stbuf->st_blocks = (ni->allocated_size + 511) >> 9;
+		stbuf->st_mode = S_IFLNK;
+		free(target);
+		res = 0;
+	} else {
+		res = -errno;
+	}
+	return (res);
+}
+
+/*
+ *		Apply permission masks to st_mode returned by reparse handler
+ */
+
+static void apply_umask(struct stat *stbuf)
+{
+	switch (stbuf->st_mode & S_IFMT) {
+	case S_IFREG :
+		stbuf->st_mode &= ~ctx->fmask;
+		break;
+	case S_IFDIR :
+		stbuf->st_mode &= ~ctx->dmask;
+		break;
+	case S_IFLNK :
+		stbuf->st_mode = (stbuf->st_mode & S_IFMT) | 0777;
+		break;
+	default :
+		break;
+	}
+}
+
+#endif /* PLUGINS_DISABLED */
+
 static int ntfs_fuse_getstat(struct SECURITY_CONTEXT *scx,
 				ntfs_inode *ni, struct stat *stbuf)
 {
@@ -607,9 +692,27 @@ static int ntfs_fuse_getstat(struct SECURITY_CONTEXT *scx,
 
 	memset(stbuf, 0, sizeof(struct stat));
 	withusermapping = (scx->mapping[MAPUSERS] != (struct MAPPING*)NULL);
+	stbuf->st_nlink = le16_to_cpu(ni->mrec->link_count);
 	if ((ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)
 	    || (ni->flags & FILE_ATTR_REPARSE_POINT)) {
 		if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+			const plugin_operations_t *ops;
+			REPARSE_POINT *reparse;
+
+			res = CALL_REPARSE_PLUGIN(ni, getattr, stbuf);
+			if (!res) {
+				apply_umask(stbuf);
+			} else {
+				stbuf->st_size =
+					sizeof(ntfs_bad_reparse);
+				stbuf->st_blocks =
+					(ni->allocated_size + 511) >> 9;
+				stbuf->st_mode = S_IFLNK;
+				res = 0;
+			}
+			goto ok;
+#else /* PLUGINS_DISABLED */
 			char *target;
 			int attr_size;
 
@@ -638,6 +741,7 @@ static int ntfs_fuse_getstat(struct SECURITY_CONTEXT *scx,
 				res = -errno;
 				goto exit;
 			}
+#endif /* PLUGINS_DISABLED */
 		} else {
 			/* Directory. */
 			stbuf->st_mode = S_IFDIR | (0777 & ~ctx->dmask);
@@ -676,7 +780,6 @@ static int ntfs_fuse_getstat(struct SECURITY_CONTEXT *scx,
 		 * See more on the ntfs-3g-devel list.
 		 */
 		stbuf->st_blocks = (ni->allocated_size + 511) >> 9;
-		stbuf->st_nlink = le16_to_cpu(ni->mrec->link_count);
 		if (ni->flags & FILE_ATTR_SYSTEM) {
 			na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
 			if (!na) {
@@ -742,6 +845,9 @@ static int ntfs_fuse_getstat(struct SECURITY_CONTEXT *scx,
 		}
 		stbuf->st_mode |= (0777 & ~ctx->fmask);
 	}
+#ifndef PLUGINS_DISABLED
+ok:
+#endif /* PLUGINS_DISABLED */
 	if (withusermapping) {
 		if (ntfs_get_owner_mode(scx,ni,stbuf) < 0)
 			set_fuse_error(&res);
@@ -884,6 +990,36 @@ static void ntfs_fuse_lookup(fuse_req_t req, fuse_ino_t parent,
 		fuse_reply_entry(req, &entry);
 }
 
+#ifndef PLUGINS_DISABLED
+
+/*
+ *		Get the link defined by a junction or symlink
+ *		(internal plugin)
+ */
+
+static int junction_readlink(ntfs_inode *ni,
+			const REPARSE_POINT *reparse __attribute__((unused)),
+			char **pbuf)
+{
+	int attr_size;
+	int res;
+
+	errno = 0;
+	res = 0;
+	*pbuf = ntfs_make_symlink(ni, ctx->abs_mnt_point, &attr_size);
+	if (!*pbuf) {
+		if (errno == EOPNOTSUPP) {
+			*pbuf = strdup(ntfs_bad_reparse);
+			if (!*pbuf)
+				res = -errno;
+		} else
+			res = -errno;
+	}
+	return (res);
+}
+
+#endif /* PLUGINS_DISABLED */
+
 static void ntfs_fuse_readlink(fuse_req_t req, fuse_ino_t ino)
 {
 	ntfs_inode *ni = NULL;
@@ -902,6 +1038,17 @@ static void ntfs_fuse_readlink(fuse_req_t req, fuse_ino_t ino)
 		 * Reparse point : analyze as a junction point
 		 */
 	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+		const plugin_operations_t *ops;
+		REPARSE_POINT *reparse;
+
+		res = CALL_REPARSE_PLUGIN(ni, readlink, &buf);
+		if (res) {
+			buf = strdup(ntfs_bad_reparse);
+			if (!buf)
+				res = -errno;
+		}
+#else /* PLUGINS_DISABLED */
 		int attr_size;
 
 		errno = 0;
@@ -913,7 +1060,8 @@ static void ntfs_fuse_readlink(fuse_req_t req, fuse_ino_t ino)
 			if (!buf)
 				res = -errno;
 		}
-		goto exit;
+#endif /* PLUGINS_DISABLED */
+ 		goto exit;
 	}
 	/* Sanity checks. */
 	if (!(ni->flags & FILE_ATTR_SYSTEM)) {
@@ -1266,10 +1414,9 @@ static void ntfs_fuse_open(fuse_req_t req, fuse_ino_t ino,
 		      struct fuse_file_info *fi)
 {
 	ntfs_inode *ni;
-	ntfs_attr *na;
+	ntfs_attr *na = NULL;
 	struct open_file *of;
 	int state = 0;
-	char *path = NULL;
 	int res = 0;
 #if !KERNELPERMS | (POSIXACLS & !KERNELACLS)
 	int accesstype;
@@ -1278,56 +1425,77 @@ static void ntfs_fuse_open(fuse_req_t req, fuse_ino_t ino,
 
 	ni = ntfs_inode_open(ctx->vol, INODE(ino));
 	if (ni) {
-		na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-		if (na) {
+		if (!(ni->flags & FILE_ATTR_REPARSE_POINT)) {
+			na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+			if (!na) {
+				res = -errno;
+				goto close;
+			}
+		}
 #if !KERNELPERMS | (POSIXACLS & !KERNELACLS)
-			if (ntfs_fuse_fill_security_context(req, &security)) {
-				if (fi->flags & O_WRONLY)
-					accesstype = S_IWRITE;
+		if (ntfs_fuse_fill_security_context(req, &security)) {
+			if (fi->flags & O_WRONLY)
+				accesstype = S_IWRITE;
+			else
+				if (fi->flags & O_RDWR)
+					accesstype = S_IWRITE | S_IREAD;
 				else
-					if (fi->flags & O_RDWR)
-						accesstype = S_IWRITE | S_IREAD;
-					else
-						accesstype = S_IREAD;
-			     /* check whether requested access is allowed */
-				if (!ntfs_allowed_access(&security,
-						ni,accesstype))
-					res = -EACCES;
-			}
+					accesstype = S_IREAD;
+		     /* check whether requested access is allowed */
+			if (!ntfs_allowed_access(&security,
+					ni,accesstype))
+				res = -EACCES;
+		}
 #endif
-			if ((res >= 0)
-			    && (fi->flags & (O_WRONLY | O_RDWR))) {
-			/* mark a future need to compress the last chunk */
-				if (na->data_flags & ATTR_COMPRESSION_MASK)
-					state |= CLOSE_COMPRESSED;
-#ifdef HAVE_SETXATTR	/* extended attributes interface required */
-			/* mark a future need to fixup encrypted inode */
-				if (ctx->efs_raw
-				    && !(na->data_flags & ATTR_IS_ENCRYPTED)
-				    && (ni->flags & FILE_ATTR_ENCRYPTED))
-					state |= CLOSE_ENCRYPTED;
-#endif /* HAVE_SETXATTR */
-			/* mark a future need to update the mtime */
-				if (ctx->dmtime)
-					state |= CLOSE_DMTIME;
-			/* deny opening metadata files for writing */
-				if (ino < FILE_first_user)
-					res = -EPERM;
+		if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+			const plugin_operations_t *ops;
+			REPARSE_POINT *reparse;
+
+			fi->fh = 0;
+			res = CALL_REPARSE_PLUGIN(ni, open, fi);
+			if (!res && fi->fh) {
+				state = CLOSE_REPARSE;
 			}
-			ntfs_attr_close(na);
-		} else
-			res = -errno;
+#else /* PLUGINS_DISABLED */
+			res = -EOPNOTSUPP;
+#endif /* PLUGINS_DISABLED */
+			goto close;
+		}
+		if ((res >= 0)
+		    && (fi->flags & (O_WRONLY | O_RDWR))) {
+		/* mark a future need to compress the last chunk */
+			if (na->data_flags & ATTR_COMPRESSION_MASK)
+				state |= CLOSE_COMPRESSED;
+#ifdef HAVE_SETXATTR	/* extended attributes interface required */
+		/* mark a future need to fixup encrypted inode */
+			if (ctx->efs_raw
+			    && !(na->data_flags & ATTR_IS_ENCRYPTED)
+			    && (ni->flags & FILE_ATTR_ENCRYPTED))
+				state |= CLOSE_ENCRYPTED;
+#endif /* HAVE_SETXATTR */
+		/* mark a future need to update the mtime */
+			if (ctx->dmtime)
+				state |= CLOSE_DMTIME;
+			/* deny opening metadata files for writing */
+			if (ino < FILE_first_user)
+				res = -EPERM;
+		}
+		ntfs_attr_close(na);
+close:
 		if (ntfs_inode_close(ni))
 			set_fuse_error(&res);
 	} else
 		res = -errno;
-	free(path);
 	if (res >= 0) {
 		of = (struct open_file*)malloc(sizeof(struct open_file));
 		if (of) {
 			of->parent = 0;
 			of->ino = ino;
 			of->state = state;
+#ifdef PLUGIN_ENABLED
+			memcpy(&of->fi, fi, sizeof(struct fuse_file_info));
+#endif /* PLUGIN_ENABLED */
 			of->next = ctx->open_files;
 			of->previous = (struct open_file*)NULL;
 			if (ctx->open_files)
@@ -1368,6 +1536,22 @@ static void ntfs_fuse_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 		res = -errno;
 		goto exit;
 	}
+	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+		const plugin_operations_t *ops;
+		REPARSE_POINT *reparse;
+		struct open_file *of;
+
+		of = (struct open_file*)fi;
+		res = CALL_REPARSE_PLUGIN(ni, read, buf, size, offset, &of->fi);
+		if (res >= 0) {
+			goto stamps;
+		}
+#else /* PLUGINS_DISABLED */
+		res = -EOPNOTSUPP;
+#endif /* PLUGINS_DISABLED */
+		goto exit;
+	}
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
 	if (!na) {
 		res = -errno;
@@ -1403,8 +1587,11 @@ static void ntfs_fuse_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 		total += ret;
 	}
 ok:
-	ntfs_fuse_update_times(na->ni, NTFS_UPDATE_ATIME);
 	res = total;
+#ifndef PLUGINS_DISABLED
+stamps :
+#endif /* PLUGINS_DISABLED */
+	ntfs_fuse_update_times(ni, NTFS_UPDATE_ATIME);
 exit:
 	if (na)
 		ntfs_attr_close(na);
@@ -1430,6 +1617,23 @@ static void ntfs_fuse_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 		res = -errno;
 		goto exit;
 	}
+	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+		const plugin_operations_t *ops;
+		REPARSE_POINT *reparse;
+		struct open_file *of;
+
+		of = (struct open_file*)fi;
+		res = CALL_REPARSE_PLUGIN(ni, write, buf, size, offset,
+								&of->fi);
+		if (res >= 0) {
+			goto stamps;
+		}
+#else /* PLUGINS_DISABLED */
+		res = -EOPNOTSUPP;
+#endif /* PLUGINS_DISABLED */
+		goto exit;
+	}
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
 	if (!na) {
 		res = -errno;
@@ -1446,15 +1650,18 @@ static void ntfs_fuse_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 		total  += ret;
 	}
 	res = total;
+#ifndef PLUGINS_DISABLED 
+stamps :
+#endif /* PLUGINS_DISABLED */
 	if ((res > 0)
 	    && (!ctx->dmtime
-		|| (le64_to_cpu(ntfs_current_time())
-		     - le64_to_cpu(ni->last_data_change_time)) > ctx->dmtime))
-		ntfs_fuse_update_times(na->ni, NTFS_UPDATE_MCTIME);
+		|| (sle64_to_cpu(ntfs_current_time())
+		     - sle64_to_cpu(ni->last_data_change_time)) > ctx->dmtime))
+		ntfs_fuse_update_times(ni, NTFS_UPDATE_MCTIME);
 exit:
 	if (na)
 		ntfs_attr_close(na);
-	if (total)
+	if (res > 0)
 		set_archive(ni);
 	if (ntfs_inode_close(ni))
 		set_fuse_error(&res);
@@ -1607,9 +1814,11 @@ static int ntfs_fuse_trunc(struct SECURITY_CONTEXT *scx, fuse_ino_t ino,
 		errno = EPERM;
 		goto exit;
 	}
-	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na)
-		goto exit;
+	if (!(ni->flags & FILE_ATTR_REPARSE_POINT)) {
+		na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+		if (!na)
+			goto exit;
+	}
 #if !KERNELPERMS | (POSIXACLS & !KERNELACLS)
 	/*
 	 * deny truncation if cannot write to file
@@ -1622,6 +1831,21 @@ static int ntfs_fuse_trunc(struct SECURITY_CONTEXT *scx, fuse_ino_t ino,
 		goto exit;
 	}
 #endif
+	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+		const plugin_operations_t *ops;
+		REPARSE_POINT *reparse;
+
+		res = CALL_REPARSE_PLUGIN(ni, truncate, size);
+		if (!res) {
+			set_archive(ni);
+			goto stamps;
+		}
+#else /* PLUGINS_DISABLED */
+		res = -EOPNOTSUPP;
+#endif /* PLUGINS_DISABLED */
+		goto exit;
+	}
 		/*
 		 * for compressed files, upsizing is done by inserting a final
 		 * zero, which is optimized as creating a hole when possible. 
@@ -1637,8 +1861,11 @@ static int ntfs_fuse_trunc(struct SECURITY_CONTEXT *scx, fuse_ino_t ino,
 			goto exit;
 	if (oldsize != size)
 		set_archive(ni);
-        
-	ntfs_fuse_update_times(na->ni, NTFS_UPDATE_MCTIME);
+
+#ifndef PLUGINS_DISABLED
+stamps :
+#endif /* PLUGINS_DISABLED */
+	ntfs_fuse_update_times(ni, NTFS_UPDATE_MCTIME);
 	res = ntfs_fuse_getstat(scx, ni, stbuf);
 	errno = (res ? -res : 0);
 exit:
@@ -2550,8 +2777,8 @@ static void ntfs_fuse_release(fuse_req_t req, fuse_ino_t ino,
 	of = (struct open_file*)(long)fi->fh;
 	/* Only for marked descriptors there is something to do */
 	if (!of
-	    || !(of->state & (CLOSE_COMPRESSED
-				| CLOSE_ENCRYPTED | CLOSE_DMTIME))) {
+	    || !(of->state & (CLOSE_COMPRESSED | CLOSE_ENCRYPTED
+				| CLOSE_DMTIME | CLOSE_REPARSE))) {
 		res = 0;
 		goto out;
 	}
@@ -2560,20 +2787,38 @@ static void ntfs_fuse_release(fuse_req_t req, fuse_ino_t ino,
 		res = -errno;
 		goto exit;
 	}
+	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+#ifndef PLUGINS_DISABLED
+		const plugin_operations_t *ops;
+		REPARSE_POINT *reparse;
+
+		res = CALL_REPARSE_PLUGIN(ni, release, &of->fi);
+		if (!res) {
+			goto stamps;
+		}
+#else /* PLUGINS_DISABLED */
+			/* Assume release() was not needed */
+		res = 0;
+#endif /* PLUGINS_DISABLED */
+		goto exit;
+	}
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
 	if (!na) {
 		res = -errno;
 		goto exit;
 	}
 	res = 0;
-	if (of->state & CLOSE_DMTIME)
-		ntfs_inode_update_times(ni,NTFS_UPDATE_MCTIME);
 	if (of->state & CLOSE_COMPRESSED)
 		res = ntfs_attr_pclose(na);
 #ifdef HAVE_SETXATTR	/* extended attributes interface required */
 	if (of->state & CLOSE_ENCRYPTED)
 		res = ntfs_efs_fixup_attribute(NULL, na);
 #endif /* HAVE_SETXATTR */
+#ifndef PLUGINS_DISABLED
+stamps :
+#endif /* PLUGINS_DISABLED */
+	if (of->state & CLOSE_DMTIME)
+		ntfs_inode_update_times(ni,NTFS_UPDATE_MCTIME);
 exit:
 	if (na)
 		ntfs_attr_close(na);
@@ -2923,7 +3168,7 @@ static void ntfs_fuse_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size)
 		goto out;
 	}
 		/* Return with no result for symlinks, fifo, etc. */
-	if (ni->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_REPARSE_POINT))
+	if (!user_xattrs_allowed(ctx, ni))
 		goto exit;
 		/* otherwise file must be readable */
 #if !KERNELPERMS | (POSIXACLS & !KERNELACLS)
@@ -3072,7 +3317,7 @@ static void ntfs_fuse_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 		goto out;
 	}
 		/* Return with no result for symlinks, fifo, etc. */
-	if (ni->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_REPARSE_POINT)) {
+	if (!user_xattrs_allowed(ctx, ni)) {
 		res = -ENODATA;
 		goto exit;
 	}
@@ -3269,7 +3514,7 @@ static void ntfs_fuse_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 		break;
 	default :
 		/* User xattr not allowed for symlinks, fifo, etc. */
-		if (ni->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_REPARSE_POINT)) {
+		if (!user_xattrs_allowed(ctx, ni)) {
 			res = -EPERM;
 			goto exit;
 		}
@@ -3282,7 +3527,7 @@ static void ntfs_fuse_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 #else
 		/* User xattr not allowed for symlinks, fifo, etc. */
 	if ((namespace == XATTRNS_USER)
-	    && (ni->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_REPARSE_POINT))) {
+	    && !user_xattrs_allowed(ctx, ni)) {
 		res = -EPERM;
 		goto exit;
 	}
@@ -3514,7 +3759,7 @@ static void ntfs_fuse_removexattr(fuse_req_t req, fuse_ino_t ino, const char *na
 		break;
 	default :
 		/* User xattr not allowed for symlinks, fifo, etc. */
-		if (ni->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_REPARSE_POINT)) {
+		if (!user_xattrs_allowed(ctx, ni)) {
 			res = -EPERM;
 			goto exit;
 		}
@@ -3527,7 +3772,7 @@ static void ntfs_fuse_removexattr(fuse_req_t req, fuse_ino_t ino, const char *na
 #else
 		/* User xattr not allowed for symlinks, fifo, etc. */
 	if ((namespace == XATTRNS_USER)
-	    && (ni->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_REPARSE_POINT))) {
+	    && !user_xattrs_allowed(ctx, ni)) {
 		res = -EPERM;
 		goto exit;
 	}
@@ -3567,6 +3812,20 @@ out :
 #error "Option inconsistency : POSIXACLS requires SETXATTR"
 #endif
 #endif /* HAVE_SETXATTR */
+
+#ifndef PLUGINS_DISABLED
+static void register_internal_reparse_plugins(void)
+{
+	static const plugin_operations_t ops = {
+		.getattr = junction_getstat,
+		.readlink = junction_readlink,
+	} ;
+	register_reparse_plugin(ctx, IO_REPARSE_TAG_MOUNT_POINT,
+					&ops, (void*)NULL);
+	register_reparse_plugin(ctx, IO_REPARSE_TAG_SYMLINK,
+					&ops, (void*)NULL);
+}
+#endif /* PLUGINS_DISABLED */
 
 static void ntfs_close(void)
 {
@@ -3684,6 +3943,9 @@ static int ntfs_open(const char *device)
 		flags |= NTFS_MNT_EXCLUSIVE;
 	if (ctx->ro)
 		flags |= NTFS_MNT_RDONLY;
+	else
+		if (!ctx->hiberfile)
+			flags |= NTFS_MNT_MAY_RDONLY;
 	if (ctx->recover)
 		flags |= NTFS_MNT_RECOVER;
 	if (ctx->hiberfile)
@@ -4179,6 +4441,10 @@ int main(int argc, char *argv[])
 		free(ctx->xattrmap_path);
 #endif /* defined(HAVE_SETXATTR) && defined(XATTR_MAPPINGS) */
 
+#ifndef PLUGINS_DISABLED
+	register_internal_reparse_plugins();
+#endif /* PLUGINS_DISABLED */
+
 	se = mount_fuse(parsed_options);
 	if (!se) {
 		err = NTFS_VOLUME_FUSE_ERROR;
@@ -4214,6 +4480,9 @@ err_out:
 #endif /* defined(HAVE_SETXATTR) && defined(XATTR_MAPPINGS) */
 err2:
 	ntfs_close();
+#ifndef PLUGINS_DISABLED
+	close_reparse_plugins(ctx);
+#endif /* PLUGINS_DISABLED */
 	free(ctx);
 	free(parsed_options);
 	free(opts.options);

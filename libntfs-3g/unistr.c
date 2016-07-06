@@ -59,7 +59,11 @@
 #include "logging.h"
 #include "misc.h"
 
-#define NOREVBOM 0  /* JPA rejecting U+FFFE and U+FFFF, open to debate */
+#ifndef ALLOW_BROKEN_UNICODE
+/* Erik allowing broken UTF-16 surrogate pairs and U+FFFE and U+FFFF by default,
+ * open to debate. */
+#define ALLOW_BROKEN_UNICODE 1
+#endif /* !defined(ALLOW_BROKEN_UNICODE) */
 
 /*
  * IMPORTANT
@@ -244,7 +248,7 @@ int ntfs_names_full_collate(const ntfschar *name1, const u32 name1_len,
  */
 int ntfs_ucsncmp(const ntfschar *s1, const ntfschar *s2, size_t n)
 {
-	ntfschar c1, c2;
+	u16 c1, c2;
 	size_t i;
 
 #ifdef DEBUG
@@ -360,7 +364,7 @@ ntfschar *ntfs_ucsndup(const ntfschar *s, u32 maxlen)
 	dst = ntfs_malloc((len + 1) * sizeof(ntfschar));
 	if (dst) {
 		memcpy(dst, s, len * sizeof(ntfschar));
-		dst[len] = cpu_to_le16(L'\0');
+		dst[len] = const_cpu_to_le16(L'\0');
 	}
 	return dst;
 }
@@ -462,8 +466,22 @@ static int utf16_to_utf8_size(const ntfschar *ins, const int ins_len, int outs_l
 			if ((c >= 0xdc00) && (c < 0xe000)) {
 				surrog = FALSE;
 				count += 4;
-			} else 
+			} else {
+#if ALLOW_BROKEN_UNICODE
+				/* The first UTF-16 unit of a surrogate pair has
+				 * a value between 0xd800 and 0xdc00. It can be
+				 * encoded as an individual UTF-8 sequence if we
+				 * cannot combine it with the next UTF-16 unit
+				 * unit as a surrogate pair. */
+				surrog = FALSE;
+				count += 3;
+
+				--i;
+				continue;
+#else
 				goto fail;
+#endif /* ALLOW_BROKEN_UNICODE */
+			}
 		} else
 			if (c < 0x80)
 				count++;
@@ -473,11 +491,13 @@ static int utf16_to_utf8_size(const ntfschar *ins, const int ins_len, int outs_l
 				count += 3;
 			else if (c < 0xdc00)
 				surrog = TRUE;
-#if NOREVBOM
-			else if ((c >= 0xe000) && (c < 0xfffe))
-#else
+#if ALLOW_BROKEN_UNICODE
+			else if (c < 0xe000)
+				count += 3;
 			else if (c >= 0xe000)
-#endif
+#else
+			else if ((c >= 0xe000) && (c < 0xfffe))
+#endif /* ALLOW_BROKEN_UNICODE */
 				count += 3;
 			else 
 				goto fail;
@@ -487,7 +507,11 @@ static int utf16_to_utf8_size(const ntfschar *ins, const int ins_len, int outs_l
 		}
 	}
 	if (surrog) 
+#if ALLOW_BROKEN_UNICODE
+		count += 3; /* ending with a single surrogate */
+#else
 		goto fail;
+#endif /* ALLOW_BROKEN_UNICODE */
 
 	ret = count;
 out:
@@ -548,8 +572,24 @@ static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
 				*t++ = 0x80 + ((c >> 6) & 15) + ((halfpair & 3) << 4);
 				*t++ = 0x80 + (c & 63);
 				halfpair = 0;
-			} else 
+			} else {
+#if ALLOW_BROKEN_UNICODE
+				/* The first UTF-16 unit of a surrogate pair has
+				 * a value between 0xd800 and 0xdc00. It can be
+				 * encoded as an individual UTF-8 sequence if we
+				 * cannot combine it with the next UTF-16 unit
+				 * unit as a surrogate pair. */
+				*t++ = 0xe0 | (halfpair >> 12);
+				*t++ = 0x80 | ((halfpair >> 6) & 0x3f);
+				*t++ = 0x80 | (halfpair & 0x3f);
+				halfpair = 0;
+
+				--i;
+				continue;
+#else
 				goto fail;
+#endif /* ALLOW_BROKEN_UNICODE */
+			}
 		} else if (c < 0x80) {
 			*t++ = c;
 	    	} else {
@@ -562,6 +602,13 @@ static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
 		        	*t++ = 0x80 | (c & 0x3f);
 			} else if (c < 0xdc00)
 				halfpair = c;
+#if ALLOW_BROKEN_UNICODE
+			else if (c < 0xe000) {
+				*t++ = 0xe0 | (c >> 12);
+				*t++ = 0x80 | ((c >> 6) & 0x3f);
+				*t++ = 0x80 | (c & 0x3f);
+			}
+#endif /* ALLOW_BROKEN_UNICODE */
 			else if (c >= 0xe000) {
 				*t++ = 0xe0 | (c >> 12);
 				*t++ = 0x80 | ((c >> 6) & 0x3f);
@@ -570,6 +617,13 @@ static int ntfs_utf16_to_utf8(const ntfschar *ins, const int ins_len,
 				goto fail;
 	        }
 	}
+#if ALLOW_BROKEN_UNICODE
+	if (halfpair) { /* ending with a single surrogate */
+		*t++ = 0xe0 | (halfpair >> 12);
+		*t++ = 0x80 | ((halfpair >> 6) & 0x3f);
+		*t++ = 0x80 | (halfpair & 0x3f);
+	}
+#endif /* ALLOW_BROKEN_UNICODE */
 	*t = '\0';
 	
 #if defined(__APPLE__) || defined(__DARWIN__)
@@ -691,15 +745,16 @@ static int utf8_to_unicode(u32 *wc, const char *s)
 			    | ((u32)(s[1] & 0x3F) << 6)
 			    | ((u32)(s[2] & 0x3F));
 			/* Check valid ranges */
-#if NOREVBOM
+#if ALLOW_BROKEN_UNICODE
 			if (((*wc >= 0x800) && (*wc <= 0xD7FF))
-			  || ((*wc >= 0xe000) && (*wc <= 0xFFFD)))
+			  || ((*wc >= 0xD800) && (*wc <= 0xDFFF))
+			  || ((*wc >= 0xe000) && (*wc <= 0xFFFF)))
 				return 3;
 #else
 			if (((*wc >= 0x800) && (*wc <= 0xD7FF))
-			  || ((*wc >= 0xe000) && (*wc <= 0xFFFF)))
+			  || ((*wc >= 0xe000) && (*wc <= 0xFFFD)))
 				return 3;
-#endif
+#endif /* ALLOW_BROKEN_UNICODE */
 		}
 		goto fail;
 					/* four-byte */
@@ -1050,7 +1105,7 @@ int ntfs_mbstoucs(const char *ins, ntfschar **outs)
 	}
 #endif
 	/* Now write the NULL character. */
-	ucs[o] = cpu_to_le16(L'\0');
+	ucs[o] = const_cpu_to_le16(L'\0');
 	*outs = ucs;
 	return o;
 err_out:
@@ -1236,7 +1291,8 @@ void ntfs_upcase_table_build(ntfschar *uc, u32 uc_len)
 		{ 0x3c2, 0x3c2,  0x0, 2, 6, 1 },
 		{ 0x3d7, 0x3d7, -0x8, 2, 6, 1 },
 		{ 0x515, 0x523, -0x1, 2, 6, 1 },
-		{ 0x1d79, 0x1d79, 0x8a04, 2, 6, 1 },
+			/* below, -0x75fc stands for 0x8a04 and truncation */
+		{ 0x1d79, 0x1d79, -0x75fc, 2, 6, 1 },
 		{ 0x1efb, 0x1eff, -0x1, 2, 6, 1 },
 		{ 0x1fc3, 0x1ff3,  0x9, 48, 6, 1 },
 		{ 0x1fcc, 0x1ffc,  0x0, 48, 6, 1 },
