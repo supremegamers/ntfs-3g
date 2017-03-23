@@ -16,47 +16,47 @@
  *		-t run internal tests (with no access to storage)
  *
  *	On Linux (being root, with volume not mounted) :
- *		secaudit -h [file]
+ *		ntfssecaudit -h [file]
  *			display the security descriptors found in file
- *		secaudit -a[rv] volume
+ *		ntfssecaudit -a[rv] volume
  *			audit the volume
- *		secaudit [-v] volume file
+ *		ntfssecaudit [-v] volume file
  *			display the security parameters of file
- *		secaudit -r[v] volume directory
+ *		ntfssecaudit -r[v] volume directory
  *			display the security parameters of files in directory
- *		secaudit -b[v] volume [directory]
+ *		ntfssecaudit -b[v] volume [directory]
  *			backup the security parameters of files in directory
- *		secaudit -s[ve] volume [backupfile]
+ *		ntfssecaudit -s[ve] volume [backupfile]
  *			set the security parameters as indicated in backup
  *			with -e set extra parameters (Windows attrib)
- *		secaudit volume perms file
+ *		ntfssecaudit volume perms file
  *			set the security parameters of file to perms (mode or acl)
- *		secaudit -r[v] volume perms directory
+ *		ntfssecaudit -r[v] volume perms directory
  *			set the security parameters of files in directory to perms
  *          special cases, do not require being root :
- *		secaudit [-v] mounted-file
+ *		ntfssecaudit [-v] mounted-file
  *			display the security parameters of mounted file
- *		secaudit -u[v] mounted-file
+ *		ntfssecaudit -u[v] mounted-file
  *			display a user mapping proposal
  *
  *
  *	On Windows (the volume being part of file name)
- *		secaudit -h [file]
+ *		ntfssecaudit -h [file]
  *			display the security descriptors found in file
- *		secaudit -a[rv] volume
+ *		ntfssecaudit -a[rv] volume
  *			audit the volume
- *		secaudit [-v] file
+ *		ntfssecaudit [-v] file
  *			display the security parameters of file
- *		secaudit -r[v] directory
+ *		ntfssecaudit -r[v] directory
  *			display the security parameters of files in directory
- *		secaudit -b[v] directory
+ *		ntfssecaudit -b[v] directory
  *			backup the security parameters of files in directory
- *		secaudit -s[v] volume [backupfile]
+ *		ntfssecaudit -s[v] volume [backupfile]
  *			set the security parameters as indicated in backup
  *			with -e set extra parameters (Windows attrib)
- *		secaudit perms file
+ *		ntfssecaudit perms file
  *			set the security parameters of file to perms (mode or acl)
- *		secaudit -r[v] perms directory
+ *		ntfssecaudit -r[v] perms directory
  *			set the security parameters of files in directory to perms
  */
 
@@ -583,7 +583,7 @@ static BOOL open_volume(const char *volume, unsigned long flags)
 		ntfs_context = ntfs_initialize_file_security(volume, flags);
 		if (ntfs_context) {
 			if (*(u32*)ntfs_context != MAGIC_API) {
-				fprintf(stderr,"Versions of ntfs-3g and secaudit"
+				fprintf(stderr,"Versions of ntfs-3g and ntfssecaudit"
 						" are not compatible\n");
 			} else {
 				fprintf(stderr,"\"%s\" opened %s\n",volume,
@@ -2083,6 +2083,7 @@ static void showhex(FILE *fd)
 	unsigned int off;
 	int i;
 	le32 *pattr;
+	BOOL acceptable;
 	BOOL isdump;
 	BOOL done;
 
@@ -2107,13 +2108,26 @@ static void showhex(FILE *fd)
 		isdump = ishexdump(line, first, lth);
 		if (isdump) off = getmsbhex(&line[first]);
 			/* line is not an hexadecimal dump */
-			/* display what we have in store */
-		if ((!isdump || !off) && pos && ntfs_valid_descr((char*)attr,pos)) {
+			/* display what we have in store if acceptable */
+		acceptable = ((!isdump || !off)
+				&& (pos >= 20))
+				&& (pos > get4l(attr,4))
+				&& (pos > get4l(attr,8))
+				&& (pos > get4l(attr,12))
+				&& (pos > get4l(attr,16))
+				&& (pos >= ntfs_attr_size(attr));
+		if (acceptable) {
 			printf("	Computed hash : 0x%08lx\n",
 				    (unsigned long)hash((le32*)attr,
 				    ntfs_attr_size(attr)));
 			isdir = guess_dir(attr);
-			printf("    Estimated type : %s\n",(isdir ? "directory" : "file"));
+			printf("    Estimated type : %s\n",
+					(isdir ? "directory" : "file"));
+			if (!ntfs_valid_descr((char*)attr,pos)) {
+				printf("**  Bad descriptor,"
+					" trying to display anyway\n");
+				errors++;
+			}
 			showheader(attr,4);
 			showusid(attr,4);
 			showgsid(attr,4);
@@ -2308,7 +2322,7 @@ static BOOL restore(FILE *fd)
 		isdump = ishexdump(line, first, lth);
 		if (isdump) off = getmsbhex(&line[first]);
 			/* line is not an hexadecimal dump */
-			/* apply what we have in store */
+			/* apply what we have in store, only if valid */
 		if ((!isdump || !off) && pos && ntfs_valid_descr((char*)attr,pos)) {
 			withattr = TRUE;
 			if (opt_v >= 2) {
@@ -5941,27 +5955,27 @@ static void usage(void)
 #ifdef HAVE_WINDOWS_H
 	fprintf(stderr,"Usage:\n");
 #ifdef SELFTESTS
-	fprintf(stderr,"   secaudit -t\n");
+	fprintf(stderr,"   ntfssecaudit -t\n");
 	fprintf(stderr,"	run self-tests\n");
 #endif /* SELFTESTS */
-	fprintf(stderr,"   secaudit -h [file]\n");
+	fprintf(stderr,"   ntfssecaudit -h [file]\n");
 	fprintf(stderr,"	display security descriptors within file\n");
-	fprintf(stderr,"   secaudit -a[rv] volume\n");
+	fprintf(stderr,"   ntfssecaudit -a[rv] volume\n");
 	fprintf(stderr,"	audit the volume\n");
-	fprintf(stderr,"   secaudit [-v] file\n");
+	fprintf(stderr,"   ntfssecaudit [-v] file\n");
 	fprintf(stderr,"	display the security parameters of file\n");
-	fprintf(stderr,"   secaudit -r[v] directory\n");
+	fprintf(stderr,"   ntfssecaudit -r[v] directory\n");
 	fprintf(stderr,"	display the security parameters of files in directory\n");
-	fprintf(stderr,"   secaudit -b[v] directory\n");
+	fprintf(stderr,"   ntfssecaudit -b[v] directory\n");
 	fprintf(stderr,"        backup the security parameters of files in directory\n");
-	fprintf(stderr,"   secaudit -s[ev] volume [backupfile]\n");
+	fprintf(stderr,"   ntfssecaudit -s[ev] volume [backupfile]\n");
 	fprintf(stderr,"        set the security parameters as indicated in backup file\n");
 	fprintf(stderr,"        with -e also set extra parameters (Windows attrib)\n");
-	fprintf(stderr,"   secaudit perms file\n");
+	fprintf(stderr,"   ntfssecaudit perms file\n");
 	fprintf(stderr,"	set the security parameters of file to perms\n");
-	fprintf(stderr,"   secaudit -r[v] perms directory\n");
+	fprintf(stderr,"   ntfssecaudit -r[v] perms directory\n");
 	fprintf(stderr,"	set the security parameters of files in directory to perms\n");
-	fprintf(stderr,"   secaudit -u file\n");
+	fprintf(stderr,"   ntfssecaudit -u file\n");
 	fprintf(stderr,"	get a user mapping proposal applicable to file\n");
 #if POSIXACLS
 	fprintf(stderr,"   Notes: perms can be an octal mode or a Posix ACL description\n");
@@ -5973,31 +5987,31 @@ static void usage(void)
 #else /* HAVE_WINDOWS_H */
 	fprintf(stderr,"Usage:\n");
 #ifdef SELFTESTS
-	fprintf(stderr,"   secaudit -t\n");
+	fprintf(stderr,"   ntfssecaudit -t\n");
 	fprintf(stderr,"	run self-tests\n");
 #endif /* SELFTESTS */
-	fprintf(stderr,"   secaudit -h [file]\n");
+	fprintf(stderr,"   ntfssecaudit -h [file]\n");
 	fprintf(stderr,"	display security descriptors within file\n");
-	fprintf(stderr,"   secaudit -a[rv] volume\n");
+	fprintf(stderr,"   ntfssecaudit -a[rv] volume\n");
 	fprintf(stderr,"	audit the volume\n");
-	fprintf(stderr,"   secaudit [-v] volume file\n");
+	fprintf(stderr,"   ntfssecaudit [-v] volume file\n");
 	fprintf(stderr,"	display the security parameters of file\n");
-	fprintf(stderr,"   secaudit -r[v] volume directory\n");
+	fprintf(stderr,"   ntfssecaudit -r[v] volume directory\n");
 	fprintf(stderr,"	display the security parameters of files in directory\n");
-	fprintf(stderr,"   secaudit -b[v] volume directory\n");
+	fprintf(stderr,"   ntfssecaudit -b[v] volume directory\n");
 	fprintf(stderr,"        backup the security parameters of files in directory\n");
-	fprintf(stderr,"   secaudit -s[ev] volume [backupfile]\n");
+	fprintf(stderr,"   ntfssecaudit -s[ev] volume [backupfile]\n");
 	fprintf(stderr,"        set the security parameters as indicated in backup file\n");
 	fprintf(stderr,"        with -e also set extra parameters (Windows attrib)\n");
-	fprintf(stderr,"   secaudit volume perms file\n");
+	fprintf(stderr,"   ntfssecaudit volume perms file\n");
 	fprintf(stderr,"	set the security parameters of file to perms\n");
-	fprintf(stderr,"   secaudit -r[v] volume perms directory\n");
+	fprintf(stderr,"   ntfssecaudit -r[v] volume perms directory\n");
 	fprintf(stderr,"	set the security parameters of files in directory to perms\n");
 #ifdef HAVE_SETXATTR
 	fprintf(stderr," special cases, do not require being root :\n");
-	fprintf(stderr,"   secaudit -u mounted-file\n");
+	fprintf(stderr,"   ntfssecaudit -u mounted-file\n");
 	fprintf(stderr,"	get a user mapping proposal applicable to mounted file\n");
-	fprintf(stderr,"   secaudit [-v] mounted-file\n");
+	fprintf(stderr,"   ntfssecaudit [-v] mounted-file\n");
 	fprintf(stderr,"	display the security parameters of a mounted file\n");
 #endif /* HAVE_SETXATTR */
 #if POSIXACLS

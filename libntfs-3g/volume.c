@@ -74,6 +74,7 @@
 #include "cache.h"
 #include "realpath.h"
 #include "misc.h"
+#include "security.h"
 
 #ifndef MOUNTED
 #define MOUNTED "/etc/mtab"
@@ -175,6 +176,9 @@ static void ntfs_error_set(int *err)
 static int __ntfs_volume_release(ntfs_volume *v)
 {
 	int err = 0;
+
+	if (ntfs_close_secure(v))
+		ntfs_error_set(&err);
 
 	if (ntfs_inode_free(&v->vol_ni))
 		ntfs_error_set(&err);
@@ -1238,6 +1242,11 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		ntfs_log_perror("Failed to close $AttrDef");
 		goto error_exit;
 	}
+
+	/* Open $Secure. */
+	if (ntfs_open_secure(vol))
+		goto error_exit;
+
 	/*
 	 * Check for dirty logfile and hibernated Windows.
 	 * We care only about read-write mounts.

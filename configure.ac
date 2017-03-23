@@ -24,8 +24,8 @@
 
 # Autoconf
 AC_PREREQ(2.59)
-AC_INIT([ntfs-3g],[2016.2.22],[ntfs-3g-devel@lists.sf.net])
-LIBNTFS_3G_VERSION="87"
+AC_INIT([ntfs-3g],[2017.3.23],[ntfs-3g-devel@lists.sf.net])
+LIBNTFS_3G_VERSION="88"
 AC_CONFIG_SRCDIR([src/ntfs-3g.c])
 
 # Environment
@@ -125,7 +125,7 @@ AC_ARG_ENABLE(
 	[plugins],
 	[AS_HELP_STRING([--disable-plugins], [Disable external reparse point
 	 plugins for the ntfs-3g FUSE driver])],
-	,
+	[if test x${enableval} = "xyes"; then disable_plugins="no"; fi],
 	[disable_plugins="no"]
 )
 
@@ -542,6 +542,16 @@ AC_CHECK_FUNCS([ \
 	sysconf utime utimensat gettimeofday clock_gettime fork memcpy random snprintf \
 ])
 AC_SYS_LARGEFILE
+
+# The dlopen API might be in libc or in libdl.  Check libc first, then
+# fall back to libdl.
+LIBDL=""
+if test "x${disable_plugins}" = "xno"; then
+	AC_CHECK_LIB(c, dlopen, ,
+		[AC_CHECK_LIB(dl, dlopen, [LIBDL="-ldl"],
+			[AC_MSG_ERROR(["Unable to find libdl (required for external plugin support)"])])])
+fi
+AC_SUBST([LIBDL])
 
 if test "$GCC" = "yes" ; then
 	# We add -Wall to enable some compiler warnings.

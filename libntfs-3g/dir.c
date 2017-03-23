@@ -67,10 +67,7 @@
 #include "security.h"
 #include "reparse.h"
 #include "object_id.h"
-
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
+#include "xattrs.h"
 
 /*
  * The little endian Unicode strings "$I30", "$SII", "$SDH", "$O"
@@ -2283,8 +2280,6 @@ ntfs_inode *ntfs_dir_parent_inode(ntfs_inode *ni)
 	return (dir_ni);
 }
 
-#ifdef HAVE_SETXATTR
-
 #define MAX_DOS_NAME_LENGTH	 12
 
 /*
@@ -2433,11 +2428,11 @@ int ntfs_get_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 			 */
 		ntfs_name_upcase(dosname, doslen,
 				ni->vol->upcase, ni->vol->upcase_len);
-		if (ntfs_ucstombs(dosname, doslen, &outname, size) < 0) {
+		outsize = ntfs_ucstombs(dosname, doslen, &outname, 0);
+		if (outsize < 0) {
 			ntfs_log_error("Cannot represent dosname in current locale.\n");
 			outsize = -errno;
 		} else {
-			outsize = strlen(outname);
 			if (value && (outsize <= (int)size))
 				memcpy(value, outname, outsize);
 			else
@@ -2659,9 +2654,12 @@ int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	shortlen = ntfs_mbstoucs(newname, &shortname);
 	if (shortlen > MAX_DOS_NAME_LENGTH)
 		shortlen = MAX_DOS_NAME_LENGTH;
-			/* make sure the short name has valid chars */
+
+	/* Make sure the short name has valid chars.
+	 * Note: the short name cannot end with dot or space, but the
+	 * corresponding long name can. */
 	if ((shortlen < 0)
-	    || ntfs_forbidden_names(ni->vol,shortname,shortlen)) {
+	    || ntfs_forbidden_names(ni->vol,shortname,shortlen,TRUE)) {
 		ntfs_inode_close_in_dir(ni,dir_ni);
 		ntfs_inode_close(dir_ni);
 		res = -errno;
@@ -2672,7 +2670,8 @@ int ntfs_set_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni,
 	if (longlen > 0) {
 		oldlen = get_dos_name(ni, dnum, oldname);
 		if ((oldlen >= 0)
-		    && !ntfs_forbidden_names(ni->vol, longname, longlen)) {
+		    && !ntfs_forbidden_names(ni->vol, longname, longlen,
+					     FALSE)) {
 			if (oldlen > 0) {
 				if (flags & XATTR_CREATE) {
 					res = -1;
@@ -2793,5 +2792,3 @@ int ntfs_remove_ntfs_dos_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 	}
 	return (res);
 }
-
-#endif

@@ -759,7 +759,7 @@ exit :
 
 #endif /* HAVE_SETXATTR */
 
-#ifndef PLUGINS_DISABLED
+#ifndef DISABLE_PLUGINS
 
 int register_reparse_plugin(ntfs_fuse_context_t *ctx, le32 tag,
 				const plugin_operations_t *ops, void *handle)
@@ -835,10 +835,12 @@ const struct plugin_operations *select_reparse_plugin(ntfs_fuse_context_t *ctx,
 				if (!ops)
 					dlclose(handle);
 			} else {
-				if (!(ctx->errors_logged & ERR_PLUGIN))
+				if (!(ctx->errors_logged & ERR_PLUGIN)) {
 					ntfs_log_perror(
 						"Could not load plugin %s",
 						name);
+					ntfs_log_error("Hint %s\n",dlerror());
+				}
 				ctx->errors_logged |= ERR_PLUGIN;
 			}
 		}
@@ -863,7 +865,7 @@ void close_reparse_plugins(ntfs_fuse_context_t *ctx)
 	}
 }
 
-#endif /* PLUGINS_DISABLED */
+#endif /* DISABLE_PLUGINS */
 
 #ifdef HAVE_SETXATTR
 
@@ -875,7 +877,8 @@ void close_reparse_plugins(ntfs_fuse_context_t *ctx)
  *	does not harm Windows).
  */
 
-BOOL user_xattrs_allowed(ntfs_fuse_context_t *ctx, ntfs_inode *ni)
+BOOL user_xattrs_allowed(ntfs_fuse_context_t *ctx __attribute__((unused)),
+			ntfs_inode *ni)
 {
 	u32 dt_type;
 	BOOL res;
@@ -887,7 +890,7 @@ BOOL user_xattrs_allowed(ntfs_fuse_context_t *ctx, ntfs_inode *ni)
 	else {
 			/* Reparse point depends on kind, see plugin */
 		if (ni->flags & FILE_ATTR_REPARSE_POINT) {
-#ifndef PLUGINS_DISABLED
+#ifndef DISABLE_PLUGINS
 			struct stat stbuf;
 			REPARSE_POINT *reparse;
 			const plugin_operations_t *ops;
@@ -901,10 +904,10 @@ BOOL user_xattrs_allowed(ntfs_fuse_context_t *ctx, ntfs_inode *ni)
 						    || S_ISDIR(stbuf.st_mode);
 				}
 				free(reparse);
-#else /* PLUGINS_DISABLED */
-			res = FALSE; /* mountpoints, symlinks, ... */
-#endif /* PLUGINS_DISABLED */
 			}
+#else /* DISABLE_PLUGINS */
+			res = FALSE; /* mountpoints, symlinks, ... */
+#endif /* DISABLE_PLUGINS */
 		} else {
 				/* Metadata */
 			if (ni->mft_no < FILE_first_user)
