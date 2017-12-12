@@ -438,6 +438,7 @@
 
 /* Android specific definitions */
 #define __timespec_defined
+#define MAJOR_IN_SYSMACROS
 #define S_IREAD   0400  /* Read by owner.   */
 #define S_IWRITE  0200  /* Write by owner.  */
 #define S_IEXEC   0100  /* Execute by owner.*/
