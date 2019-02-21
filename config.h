@@ -439,11 +439,6 @@
 /* Android specific definitions */
 #define __timespec_defined
 #define MAJOR_IN_SYSMACROS
-#define S_IREAD   0400  /* Read by owner.   */
-#define S_IWRITE  0200  /* Write by owner.  */
-#define S_IEXEC   0100  /* Execute by owner.*/
-#define setmntent(f,m)  fopen(f,m)
-#define endmntent(f)    fclose(f)
 /* Android bionic doesn't honor _FILE_OFFSET_BITS,
    so redefine off_t to be 64-bit. */
 #include <stdio.h>
