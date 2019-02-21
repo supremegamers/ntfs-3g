@@ -2403,17 +2403,23 @@ typedef struct {
  *
  * 1. The least significant 16 bits (i.e. bits 0 to 15) specify the type of
  *    the reparse point.
- * 2. The 13 bits after this (i.e. bits 16 to 28) are reserved for future use.
- * 3. The most significant three bits are flags describing the reparse point.
+ * 2. The 12 bits after this (i.e. bits 16 to 27) are reserved for future use.
+ * 3. The most significant four bits are flags describing the reparse point.
  *    They are defined as follows:
+ *	bit 28: Directory bit. If set, the directory is not a surrogate
+ *		and can be used the usual way.
  *	bit 29: Name surrogate bit. If set, the filename is an alias for
  *		another object in the system.
  *	bit 30: High-latency bit. If set, accessing the first byte of data will
  *		be slow. (E.g. the data is stored on a tape drive.)
  *	bit 31: Microsoft bit. If set, the tag is owned by Microsoft. User
  *		defined tags have to use zero here.
+ * 4. Moreover, on Windows 10 :
+ *	Some flags may be used in bits 12 to 15 to further describe the
+ *	reparse point.
  */
 typedef enum {
+	IO_REPARSE_TAG_DIRECTORY	= const_cpu_to_le32(0x10000000),
 	IO_REPARSE_TAG_IS_ALIAS		= const_cpu_to_le32(0x20000000),
 	IO_REPARSE_TAG_IS_HIGH_LATENCY	= const_cpu_to_le32(0x40000000),
 	IO_REPARSE_TAG_IS_MICROSOFT	= const_cpu_to_le32(0x80000000),
@@ -2436,10 +2442,12 @@ typedef enum {
 	IO_REPARSE_TAG_DFM		= const_cpu_to_le32(0x80000016),
 	IO_REPARSE_TAG_WOF		= const_cpu_to_le32(0x80000017),
 	IO_REPARSE_TAG_WCI		= const_cpu_to_le32(0x80000018),
+	IO_REPARSE_TAG_CLOUD		= const_cpu_to_le32(0x9000001A),
 	IO_REPARSE_TAG_GVFS             = const_cpu_to_le32(0x9000001C),
 	IO_REPARSE_TAG_LX_SYMLINK       = const_cpu_to_le32(0xA000001D),
 
 	IO_REPARSE_TAG_VALID_VALUES	= const_cpu_to_le32(0xf000ffff),
+	IO_REPARSE_PLUGIN_SELECT	= const_cpu_to_le32(0xffff0fff),
 } PREDEFINED_REPARSE_TAGS;
 
 /**
