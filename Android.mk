@@ -70,7 +70,7 @@ LOCAL_SRC_FILES := $(addprefix libntfs-3g/, \
 	volume.c \
 	xattrs.c \
 )
-LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
+LOCAL_CFLAGS := $(ntfs_3g_CFLAGS) -Wno-address-of-packed-member
 LOCAL_MODULE := libntfs-3g
 LOCAL_MODULE_TAGS := optional
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/ntfs-3g
