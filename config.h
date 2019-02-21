@@ -221,7 +221,7 @@
 #define HAVE_STRTOUL 1
 
 /* Define to 1 if `st_atim' is a member of `struct stat'. */
-/* #undef HAVE_STRUCT_STAT_ST_ATIM */
+#define HAVE_STRUCT_STAT_ST_ATIM 1
 
 /* Define to 1 if `st_atimensec' is a member of `struct stat'. */
 /* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
