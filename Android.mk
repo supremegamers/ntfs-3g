@@ -10,7 +10,7 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ntfs_3g_CFLAGS := -O2 -Wall -D_LARGEFILE_SOURCE -DHAVE_CONFIG_H -DHAVE_LINUX_FS_H
+ntfs_3g_CFLAGS := -O2 -Wall -D_FILE_OFFSET_BITS=64 -DHAVE_CONFIG_H -DHAVE_LINUX_FS_H
 
 # libfuse-lite
 include $(CLEAR_VARS)

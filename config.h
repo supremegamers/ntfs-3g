@@ -439,8 +439,3 @@
 /* Android specific definitions */
 #define __timespec_defined
 #define MAJOR_IN_SYSMACROS
-/* Android bionic doesn't honor _FILE_OFFSET_BITS,
-   so redefine off_t to be 64-bit. */
-#include <stdio.h>
-#undef off_t
-#define off_t           off64_t
