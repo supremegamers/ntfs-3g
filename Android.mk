@@ -12,28 +12,6 @@ LOCAL_PATH := $(call my-dir)
 
 ntfs_3g_CFLAGS := -O2 -Wall -D_FILE_OFFSET_BITS=64 -DHAVE_CONFIG_H -DHAVE_LINUX_FS_H
 
-# libfuse-lite
-include $(CLEAR_VARS)
-LOCAL_SRC_FILES := $(addprefix libfuse-lite/, \
-	fuse.c \
-	fusermount.c \
-	fuse_kern_chan.c \
-	fuse_loop.c \
-	fuse_lowlevel.c \
-	fuse_opt.c \
-	fuse_session.c \
-	fuse_signals.c \
-	helper.c \
-	mount.c \
-	mount_util.c \
-)
-LOCAL_CFLAGS := $(ntfs_3g_CFLAGS)
-LOCAL_MODULE := libfuse-lite
-LOCAL_MODULE_TAGS := optional
-LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/fuse-lite
-LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_C_INCLUDES)
-include $(BUILD_SHARED_LIBRARY)
-
 # libntfs-3g
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES := $(addprefix libntfs-3g/, \
