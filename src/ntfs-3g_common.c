@@ -1,7 +1,7 @@
 /**
  * ntfs-3g_common.c - Common definitions for ntfs-3g and lowntfs-3g.
  *
- * Copyright (c) 2010-2019 Jean-Pierre Andre
+ * Copyright (c) 2010-2021 Jean-Pierre Andre
  * Copyright (c) 2010      Erik Larsson
  *
  * This program/include file is free software; you can redistribute it and/or
@@ -126,6 +126,8 @@ const struct DEFOPTION optionlist[] = {
 	{ "usermapping", OPT_USERMAPPING, FLGOPT_STRING },
 	{ "xattrmapping", OPT_XATTRMAPPING, FLGOPT_STRING },
 	{ "efs_raw", OPT_EFS_RAW, FLGOPT_BOGUS },
+	{ "posix_nlink", OPT_POSIX_NLINK, FLGOPT_BOGUS },
+	{ "special_files", OPT_SPECIAL_FILES, FLGOPT_STRING },
 	{ (const char*)NULL, 0, 0 } /* end marker */
 } ;
 
@@ -426,7 +428,14 @@ char *parse_mount_options(ntfs_fuse_context_t *ctx,
 				}
 				break;
 			case OPT_USER_XATTR :
+#if defined(__APPLE__) || defined(__DARWIN__)
+				/* macOS builds use non-namespaced extended
+				 * attributes by default since it matches the
+				 * standard behaviour of macOS filesystems. */
+				ctx->streams = NF_STREAMS_INTERFACE_OPENXATTR;
+#else
 				ctx->streams = NF_STREAMS_INTERFACE_XATTR;
+#endif
 				break;
 			case OPT_NOAUTO :
 				/* Don't pass noauto option to fuse. */
@@ -492,6 +501,20 @@ char *parse_mount_options(ntfs_fuse_context_t *ctx,
 				ctx->efs_raw = TRUE;
 				break;
 #endif /* HAVE_SETXATTR */
+			case OPT_POSIX_NLINK :
+				ctx->posix_nlink = TRUE;
+				break;
+			case OPT_SPECIAL_FILES :
+				if (!strcmp(val, "interix"))
+					ctx->special_files = NTFS_FILES_INTERIX;
+				else if (!strcmp(val, "wsl"))
+					ctx->special_files = NTFS_FILES_WSL;
+				else {
+					ntfs_log_error("Invalid special_files"
+						" mode.\n");
+					goto err_exit;
+				}
+				break;
 			case OPT_FSNAME : /* Filesystem name. */
 			/*
 			 * We need this to be able to check whether filesystem
